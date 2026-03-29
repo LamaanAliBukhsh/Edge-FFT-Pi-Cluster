@@ -1,0 +1,46 @@
+x-node-common: &node-common
+  # All nodes run the same prebuilt image.
+  image: pdcm0-node:latest
+  # Default to amd64 for local laptops; set PDCM0_PLATFORM=linux/arm64 for Pi parity.
+  platform: ${PDCM0_PLATFORM:-linux/amd64}
+  # Mount the full project so every node sees the same code and datasets.
+  volumes:
+    - ..:/workspace
+  working_dir: /workspace
+  # In plain Docker Compose, use cpus/mem_limit (deploy is for Swarm mode).
+  cpus: 1.0
+  mem_limit: 2g
+  restart: unless-stopped
+  networks:
+    - LABnet
+
+services:
+  n1:
+    <<: *node-common
+    # Build once here, then N2-N4 reuse the same image tag.
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: n1
+    hostname: n1
+
+  n2:
+    <<: *node-common
+    container_name: n2
+    hostname: n2
+
+  n3:
+    <<: *node-common
+    container_name: n3
+    hostname: n3
+
+  n4:
+    <<: *node-common
+    container_name: n4
+    hostname: n4
+
+networks:
+  LABnet:
+    driver: bridge
+
+    
