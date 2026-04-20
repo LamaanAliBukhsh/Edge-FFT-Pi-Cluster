@@ -11,13 +11,13 @@
 
 This document summarizes the key theoretical findings that will guide implementation and benchmarking efforts.
 
-### **Core Prediction: 4-Node System Achieves ~2.2× Speedup**
+### **Core Prediction: 4-Node System Achieves ~2.2x Speedup**
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **Predicted Speedup** | $S(4) = 2.23\times$ | Compared to single-node baseline |
+| **Predicted Speedup** | $S(4) = 2.23x$ | Compared to single-node baseline |
 | **Parallelizable Fraction** | $f = 73.6\%$ | 26.4% is sequential bottleneck |
-| **Theoretical Maximum** | $S_{\max} = 3.79\times$ | Asymptotic limit (even with ∞ processors) |
+| **Theoretical Maximum** | $S_{max} = 3.79x$ | Asymptotic limit (even with infinite processors) |
 | **Expected Efficiency** | $E(4) = 55.8\%$ | Moderate; communication overhead ~44% of time |
 
 ---
@@ -29,13 +29,13 @@ This document summarizes the key theoretical findings that will guide implementa
 | Phase | Work | Span | Notes |
 |-------|------|------|-------|
 | **Row-FFT** | $10.5M$ ops | $10K$ ops | Parallel across 4 workers |
-| **Transposition** | $1.0M$ ops | $1.0M$ ops | ⚠️ **BOTTLENECK** (fully sequential) |
+| **Transposition** | $1.0M$ ops | $1.0M$ ops | **BOTTLENECK** (fully sequential) |
 | **Column-FFT** | $10.5M$ ops | $10K$ ops | Parallel across 4 workers |
 | **GHPF Filter** | $1.0M$ ops | $0.25M$ ops | Trivially parallel |
 | **Inverse FFT** | $22.0M$ ops | $1.1M$ ops | Mirrors forward FFT |
 | **Total** | **44M ops** | **3.2M ops** | Ideal PRAM: ~3.2ms computation |
 
-**Key:** Work/Span = 13.95, meaning theoretical speedup on ∞ processors is 13.95× (but limited to 3.79× by sequential fraction).
+**Key:** Work/Span = 13.95, meaning theoretical speedup on infinite processors is 13.95x (but limited to 3.79x by sequential fraction).
 
 ---
 
@@ -45,7 +45,7 @@ This document summarizes the key theoretical findings that will guide implementa
 
 | Parameter | Value |
 |-----------|-------|
-| Latency ($\alpha$) | 10 µs |
+| Latency ($\alpha$) | 10 $\mu$s |
 | Bandwidth ($\beta$) | 125 MB/s |
 | Data per Worker | 2 MB (image block) |
 
@@ -53,15 +53,15 @@ This document summarizes the key theoretical findings that will guide implementa
 
 | Operation | Time |
 |-----------|------|
-| Single Scatter (Master→Worker) | 16 ms |
-| Single Gather (Worker→Master) | 16 ms |
+| Single Scatter (Master to Worker) | 16 ms |
+| Single Gather (Worker to Master) | 16 ms |
 | Full FFT cycle (4 scatter + 4 gather + transpose) | **~64 ms** |
 
 ### Communication-to-Computation Ratio
 
 $$\frac{T_{\text{comm}}}{T_{\text{compute}}} = \frac{64 \text{ ms}}{3.2 \text{ ms}} = 20$$
 
-**Interpretation:** Communication is 20× longer than theoretical computation. This is the main optimization target.
+**Interpretation:** Communication is 20x longer than theoretical computation. This is the main optimization target.
 
 ---
 
@@ -97,7 +97,7 @@ $$S(P) = \frac{1}{0.264 + \frac{0.736}{P}}$$
 | 4 | **2.23x** | **56%** | **44%** |
 | 6 | 2.54x | 42% | 58% |
 | 8 | 2.67x | 33% | 67% |
-| ∞ | 3.79x | - | - |
+| infinite | 3.79x | - | - |
 
 **Insight:** 4 nodes is near the practical optimum. Beyond 6 nodes, efficiency drops sharply.
 
@@ -114,7 +114,7 @@ $$S(P) = \frac{1}{0.264 + \frac{0.736}{P}}$$
 2. Distribute transposition logic (workers transpose local blocks first)
 3. Overlap communication and computation
 
-**Expected Benefit:** 2-3 ms savings → $S(4)$ increases from 2.23× to 2.35×
+**Expected Benefit:** 2-3 ms savings - S(4) increases from 2.23x to 2.35x
 
 ### Secondary: MPI Collective Operations Latency (12% of total time)
 
@@ -125,7 +125,7 @@ $$S(P) = \frac{1}{0.264 + \frac{0.736}{P}}$$
 2. Use non-blocking MPI_Isend/MPI_Irecv
 3. Pipeline overlapping sends/receives
 
-**Expected Benefit:** 4-5 ms savings → $S(4)$ increases from 2.35× to 2.55×
+**Expected Benefit:** 4-5 ms savings - S(4) increases from 2.35x to 2.55x
 
 ### Tertiary: Master Node Congestion (N/A for 4 nodes, critical for 6+)
 
@@ -139,7 +139,7 @@ $$S(P) = \frac{1}{0.264 + \frac{0.736}{P}}$$
 
 ## Optimization Roadmap
 
-### Phase 1: Non-Blocking Communication (Impact: +0.3–0.5× speedup)
+### Phase 1: Non-Blocking Communication (Impact: +0.3-0.5x speedup)
 
 **Action Items:**
 - Replace all MPI_Send/MPI_Recv with MPI_Isend/MPI_Irecv
@@ -147,16 +147,16 @@ $$S(P) = \frac{1}{0.264 + \frac{0.736}{P}}$$
 - Use MPI_Waitall at synchronization points
 
 **Target:** Reduce sequential fraction from 26.4% to 15%  
-**Expected S(4):** $2.23 \to 2.8\times$
+**Expected S(4):** 2.23 to 2.8x
 
-### Phase 2: All-to-All Transpose (Impact: +0.1–0.2× speedup)
+### Phase 2: All-to-All Transpose (Impact: +0.1-0.2x speedup)
 
 **Action Items:**
 - Profile MPI_Alltoall performance
 - Implement optimized local transpose
 
 **Target:** 20% faster transposition phase  
-**Expected S(4):** $2.8 \to 2.95\times$
+**Expected S(4):** 2.8 to 2.95x
 
 ### Phase 3: Distributed Transposition (Impact: +0.1× speedup, scales better for 6+ nodes)
 
@@ -165,8 +165,8 @@ $$S(P) = \frac{1}{0.264 + \frac{0.736}{P}}$$
 - Workers coordinate transpose locally
 
 **Target:** Eliminate central master bottleneck  
-**Expected S(4):** $2.95 \to 3.0\times$  
-**Expected S(6):** $2.54 \to 3.2\times$ (much better scaling)
+**Expected S(4):** 2.95 to 3.0x
+**Expected S(6):** 2.54 to 3.2x (much better scaling)
 
 ---
 
@@ -177,7 +177,7 @@ Use this to validate predictions against empirical measurements:
 - [ ] **Single-node baseline:** Measure time for 2D FFT on master alone
 - [ ] **4-node execution:** Run full distributed pipeline, measure total time
 - [ ] **Speedup calculation:** $S(4) = T_{\text{single}} / T_{\text{4node}}$
-  - Expected: $2.0 \leq S(4) \leq 2.5\times$
+  - Expected: 2.0 <= S(4) <= 2.5x
   - If $S < 2.0$: Communication overhead worse than estimated
   - If $S > 2.5$: Excellent optimization or conservative estimate
 - [ ] **Per-phase timing:**
@@ -187,8 +187,8 @@ Use this to validate predictions against empirical measurements:
   - Communication breakdown (should be ~60+ ms total)
 - [ ] **Communication profiling:** Use MPI_Wtime to measure send/receive times
 - [ ] **Efficiency calculation:** $E(4) = S(4) / 4$
-  - Expected: $0.5 \leq E(4) \leq 0.7$
-- [ ] **Sensitivity:** Vary image size (256×256, 512×512, 1024×1024) and measure scaling
+  - Expected: 0.5 <= E(4) <= 0.7
+- [ ] **Sensitivity:** Vary image size (256x256, 512x512, 1024x1024) and measure scaling
 
 ---
 
@@ -196,19 +196,19 @@ Use this to validate predictions against empirical measurements:
 
 **Your Goals:**
 
-1. **Target Speedup:** $S(4) > 3.0\times$ (beat distributed version)
+1. **Target Speedup:** S(4) > 3.0x (beat distributed version)
 2. **Why Achievable:** Eliminate network latency + transposition overhead
-3. **Key Metric:** Parallelizable fraction should approach $f \approx 0.95+$ (vs. 0.736 for distributed)
+3. **Key Metric:** Parallelizable fraction should approach f ~0.95+ (vs. 0.736 for distributed)
 
 ### Expected Performance
 
 | Approach | f | S(4) | E(4) |
 |----------|---|------|------|
 | Distributed (Network) | 0.736 | 2.23x | 56% |
-| Shared Memory (IPC) | 0.92 | 3.33x | **83%** |
+| Shared Memory (IPC) | 0.92 | 3.33x | 83% |
 | Threading (M1 baseline) | 0.95 | 3.85x | 96% |
 
-**Success Criteria:** Shared memory speedup > 3.0× indicates IPC eliminated transposition bottleneck.
+**Success Criteria:** Shared memory speedup > 3.0x indicates IPC eliminated transposition bottleneck.
 
 ---
 
@@ -216,7 +216,7 @@ Use this to validate predictions against empirical measurements:
 
 **Your Goals:**
 
-1. **Measure actual speedup** vs. theoretical 2.23×
+1. **Measure actual speedup** vs. theoretical 2.23x
 2. **Identify bottlenecks** via per-phase timing
 3. **Compare three approaches:** distributed (network) vs. shared memory (IPC) vs. threading (from M1)
 4. **Stress test:** Vary image size, network latency (WiFi vs. Ethernet)
@@ -225,10 +225,10 @@ Use this to validate predictions against empirical measurements:
 
 | Test | Setup | Expected Result |
 |------|-------|---|
-| Single-node baseline | 2D FFT on master | $T_{\text{baseline}} = 300$ ms |
-| 4-node distributed | Full distributed pipeline | $T_{\text{4node}} \approx 135$ ms (2.23× speedup) |
-| 4-node with optimization | Non-blocking MPI + all-to-all | $T_{\text{optimized}} \approx 105$ ms (2.9× speedup) |
-| Shared memory (Muhammad) | IPC + no network | $T_{\text{IPC}} \approx 90$ ms (3.3× speedup) |
+| Single-node baseline | 2D FFT on master | 300 ms |
+| 4-node distributed | Full distributed pipeline | 135 ms (2.23x speedup) |
+| 4-node with optimization | Non-blocking MPI + all-to-all | 105 ms (2.9x speedup) |
+| Shared memory (Muhammad) | IPC + no network | 90 ms (3.3x speedup) |
 
 ---
 
@@ -272,7 +272,7 @@ $$E(4) = \frac{2.232}{4} = 0.558 = 55.8\%$$
 
 ## Action Items by Milestone 2 Deadline
 
-- [ ] **Lamaan (Theoretical Analysis) - COMPLETE** ✓
+- [x] **Lamaan (Theoretical Analysis) - COMPLETE**
   - [x] Derive PRAM complexity bounds
   - [x] Calculate Amdahl's Law predictions for 4-node system
   - [x] Identify bottlenecks and optimization strategies

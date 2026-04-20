@@ -1,6 +1,93 @@
 \documentclass[11pt,a4paper]{article}
 
-\usepackage{preamble}
+% ============================================================================
+% PREAMBLE (Embedded - No external .sty file needed)
+% ============================================================================
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+\usepackage{enumitem}
+
+% Colors
+\definecolor{darkblue}{rgb}{0, 0, 0.7}
+\definecolor{darkgreen}{rgb}{0, 0.5, 0}
+\definecolor{darkred}{rgb}{0.7, 0, 0}
+
+% Typography
+\onehalfspacing
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0em}
+
+% Hyperlinks
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkblue,
+    citecolor=darkblue,
+    urlcolor=darkblue,
+    bookmarksnumbered=true
+}
+
+% Code Listings
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    columns=fullflexible,
+    commentstyle=\color{gray},
+    keywordstyle=\color{darkblue}\bfseries,
+    stringstyle=\color{darkred},
+    showstringspaces=false,
+    language=Python,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    tabsize=4,
+    frame=single,
+    rulecolor=\color{lightgray}
+}
+
+% Header & Footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Lamaan Ali Bukhsh}
+\lhead{Milestone 2: Complexity Analysis}
+\cfoot{\thepage}
+
+% Theorem & Definition Environments
+\usepackage{amsthm}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}[definition]{Theorem}
+\newtheorem{lemma}[definition]{Lemma}
+\newtheorem{corollary}[definition]{Corollary}
+\newtheorem{remark}[definition]{Remark}
+
+% Custom Commands
+\newcommand{\todo}[1]{\textcolor{red}{[\textbf{TODO}: #1]}}
+\newcommand{\note}[1]{\textit{\textcolor{darkgreen}{[Note: #1]}}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\bigO}[1]{\mathcal{O}(#1)}
+\newcommand{\pram}{PRAM}
+\newcommand{\fft}{FFT}
+\newcommand{\ifft}{IFFT}
+\newcommand{\mpi}{MPI}
+
+% ============================================================================
+% DOCUMENT START
+% ============================================================================
 
 \title{Milestone 2: Theoretical Complexity Analysis\\
 \large PRAM Model \& Amdahl's Law for 4-Node Distributed FFT}
@@ -188,7 +275,7 @@ Combining all stages:
 \frac{\text{Work}}{\text{Span}} = \frac{44{,}040{,}192}{3{,}155{,}648} \approx 13.95
 \]
 
-This indicates that with perfect load balancing and zero communication, an ideal 4-processor PRAM can achieve $\sim 4.0\times$ speedup (limited by $P=4$ available processors).
+This indicates that with perfect load balancing and zero communication, an ideal 4-processor PRAM can achieve $\sim 4.0x$ speedup (limited by $P=4$ available processors).
 
 % ============================================================================
 \section{Communication Cost Analysis}
@@ -226,7 +313,7 @@ where:
 
 \subsection{Communication Phases}
 
-\subsubsection{MPI\_Scatterv (Master $\to$ Workers)}
+\subsubsection{MPI\_Scatterv (Master to Workers)}
 
 Master distributes $\frac{M \times N}{P}$ complex elements (8 bytes each) to each worker:
 
@@ -239,7 +326,7 @@ Time per worker (Ethernet):
 T_{\text{scatter}} = 10 \text{ µs} + \frac{2 \times 10^6}{125 \times 10^6} = 10 \text{ µs} + 16 \text{ ms} = 16.01 \text{ ms}
 \]
 
-\subsubsection{MPI\_Gatherv (Workers $\to$ Master)}
+\subsubsection{MPI\_Gatherv (Workers to Master)}
 
 Each worker sends its $\frac{M \times N}{P}$ results to master. Total communication:
 
@@ -277,7 +364,7 @@ T_{\text{compute}} = \frac{\text{Span}}{f_{\text{clock}}} = \frac{3{,}155{,}648}
 \frac{T_{\text{comm}}}{T_{\text{compute}}} = \frac{64 \text{ ms}}{3.2 \text{ ms}} = 20
 \]
 
-\textbf{Interpretation}: Communication overhead is $\sim 20\times$ the theoretical computation time. This is the primary bottleneck in our distributed system.
+\textbf{Interpretation}: Communication overhead is $\sim 20x$ the theoretical computation time. This is the primary bottleneck in our distributed system.
 
 % ============================================================================
 \section{Amdahl's Law Analysis}
@@ -353,7 +440,7 @@ Applying Amdahl's Law with $P = 4$ and $f = 0.736$:
 S(4) = \frac{1}{0.264 + \frac{0.736}{4}} = \frac{1}{0.264 + 0.184} = \frac{1}{0.448} = \boxed{2.232}
 \]
 
-\textbf{Interpretation}: With our estimated 26.4\% sequential fraction, a 4-node cluster achieves a predicted speedup of $\sim 2.23\times$ compared to single-node execution.
+\textbf{Interpretation}: With our estimated 26.4\% sequential fraction, a 4-node cluster achieves a predicted speedup of $\sim 2.23x$ compared to single-node execution.
 
 \subsection{Speedup Asymptote}
 
@@ -363,7 +450,7 @@ As $P \to \infty$:
 S_{\max} = \frac{1}{1-f} = \frac{1}{0.264} \approx \boxed{3.79}
 \]
 
-Even with infinite processors, our system is limited to $\sim 3.79\times$ speedup due to the 26.4\% sequential fraction.
+Even with infinite processors, our system is limited to $\sim 3.79x$ speedup due to the 26.4\% sequential fraction.
 
 \subsection{Efficiency Analysis}
 
@@ -496,7 +583,7 @@ Implement \textbf{local transpose + peer-to-peer swap} among workers to avoid ce
 \section{Experimental Validation Plan}
 % ============================================================================
 
-This theoretical analysis predicts $S(4) = 2.23\times$ speedup on our 4-node cluster. Sharjeel Chandna will validate these predictions empirically by:
+This theoretical analysis predicts $S(4) = 2.23x$ speedup on our 4-node cluster. Sharjeel Chandna will validate these predictions empirically by:
 
 \begin{enumerate}
     \item \textbf{Single-node baseline}: Run 2D FFT on master node alone. Record total time.
@@ -508,7 +595,7 @@ This theoretical analysis predicts $S(4) = 2.23\times$ speedup on our 4-node clu
             \item Computation time per phase
         \end{itemize}
     \item \textbf{Bottleneck verification}: Identify which phase dominates in practice.
-    \item \textbf{Amdahl validation}: Compare measured $S(P)$ to predictions. If $S(4) \approx 2.0\text{–}2.5$, theory is validated.
+    \item \textbf{Amdahl validation}: Compare measured $S(P)$ to predictions. If $S(4) \approx 2.0-2.5$, theory is validated.
 \end{enumerate}
 
 % ============================================================================
@@ -518,11 +605,11 @@ This theoretical analysis predicts $S(4) = 2.23\times$ speedup on our 4-node clu
 Using formal PRAM analysis and Amdahl's Law, we have established the theoretical foundations of our distributed image processing system:
 
 \begin{enumerate}
-    \item \textbf{Inherent parallelism}: The 2D FFT has $\sim 14\times$ parallelism ratio (Work/Span), allowing good speedup on multiple processors.
+    \item \textbf{Inherent parallelism}: The 2D FFT has $\sim 14x$ parallelism ratio (Work/Span), allowing good speedup on multiple processors.
     
-    \item \textbf{Sequential bottleneck}: Global matrix transposition and MPI communication comprise $\sim 26.4\%$ of total execution time, limiting speedup to $S(4) = 2.23\times$.
+    \item \textbf{Sequential bottleneck}: Global matrix transposition and MPI communication comprise $\sim 26.4\%$ of total execution time, limiting speedup to $S(4) = 2.23x$.
     
-    \item \textbf{Asymptotic limit}: Even with infinite processors, speedup is capped at $3.79\times$ (from Amdahl's Law), reflecting the 26.4\% sequential fraction.
+    \item \textbf{Asymptotic limit}: Even with infinite processors, speedup is capped at $3.79x$ (from Amdahl's Law), reflecting the 26.4\% sequential fraction.
     
     \item \textbf{Efficiency}: At $P=4$, parallel efficiency is $55.8\%$—acceptable but indicating room for optimization via non-blocking communication and distributed transposition.
     
@@ -543,7 +630,7 @@ Using formal PRAM analysis and Amdahl's Law, we have established the theoretical
 
 \bibitem{amdahl} Amdahl, G. M. (1967). 
 ``Validity of the single processor approach to achieving large scale computing capabilities.'' 
-\textit{AFIPS Conference Proceedings}, 30, 483–485.
+\textit{AFIPS Conference Proceedings}, 30, 483-485.
 
 \bibitem{mpi} Message Passing Interface Forum. (2021). 
 ``MPI: A Message-Passing Interface Standard (Version 4.0).'' 
@@ -551,7 +638,7 @@ Retrieved from \url{https://www.mpi-forum.org/}
 
 \bibitem{fft} Cooley, J. W., \& Tukey, J. W. (1965). 
 ``An algorithm for the machine calculation of complex Fourier series.'' 
-\textit{Mathematics of Computation}, 19(90), 297–301.
+\textit{Mathematics of Computation}, 19(90), 297-301.
 
 \bibitem{raspberrypi} Raspberry Pi Foundation. (2021). 
 ``Raspberry Pi 4 Technical Specifications.'' 
