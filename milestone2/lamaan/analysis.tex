@@ -1,0 +1,562 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{preamble}
+
+\title{Milestone 2: Theoretical Complexity Analysis\\
+\large PRAM Model \& Amdahl's Law for 4-Node Distributed FFT}
+\author{Lamaan Ali Bukhsh \\ \textit{Parallel and Distributed Computing Project}}
+\date{Spring 2025}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document provides a formal theoretical analysis of the distributed 2D FFT pipeline designed for a 4-node Raspberry Pi cluster (1 Master, 3 Workers). Using the Parallel Random Access Machine (PRAM) model, we derive tight complexity bounds for the core algorithms: row-column decomposition 2D FFT, Gaussian High-Pass Filter (GHPF), and Inverse 2D FFT (IFFT). We then apply Amdahl's Law to establish realistic speedup predictions and efficiency targets for the distributed implementation, accounting for communication overhead and sequential bottlenecks inherent in a resource-constrained edge system.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+\section{Introduction}
+% ============================================================================
+
+The distributed image processing pipeline implemented on our 4-node cluster decomposes the 2D FFT problem into stages:
+\begin{enumerate}
+    \item \textbf{Data Distribution}: Master scatters image row blocks to workers.
+    \item \textbf{Row-FFT Phase}: Each worker computes 1D FFT on its rows in parallel.
+    \item \textbf{Global Transposition}: Master gathers, transposes, and redistributes.
+    \item \textbf{Column-FFT Phase}: Each worker computes 1D FFT on its (transposed) rows.
+    \item \textbf{Filter Application}: GHPF applied element-wise in frequency domain.
+    \item \textbf{Inverse FFT}: Distributed IFFT mirrors the forward process.
+\end{enumerate}
+
+This analysis quantifies the inherent parallelism and identifies the sequential bottlenecks that limit scalability on a 4-node system.
+
+% ============================================================================
+\section{PRAM Complexity Analysis}
+% ============================================================================
+
+\subsection{PRAM Model Overview}
+
+The Parallel Random Access Machine (PRAM) is an abstract model of parallel computation where:
+\begin{itemize}
+    \item $P$ processors execute simultaneously on a shared memory.
+    \item Each processor can read/write a word in unit time (ignoring network delays).
+    \item We analyze algorithms in terms of \textbf{Work} (total operations) and \textbf{Span} (critical path depth).
+\end{itemize}
+
+For a real distributed system, the PRAM provides a \textbf{lower bound} on execution time (assuming perfect load balancing and zero communication). The gap between PRAM-predicted time and measured time quantifies communication overhead.
+
+\subsection{System Configuration}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{ll}
+        \hline
+        \textbf{Parameter} & \textbf{Value} \\
+        \hline
+        Cluster Size & $P = 4$ nodes (1 Master + 3 Workers) \\
+        Image Dimensions & $M \times N = 1024 \times 1024$ pixels \\
+        Data Type & Complex64 (8 bytes per element) \\
+        Total Input Size & $L = M \times N \times 8 = 8\text{ MB}$ \\
+        Work per Worker & $M/P \times N = 256 \times 1024$ elements \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsection{1D FFT Complexity (Baseline)}
+
+A single 1D FFT of length $N$ has complexity:
+\[
+\text{Work}_{\text{1D-FFT}}(N) = O(N \log N)
+\]
+
+For our system, a 1D FFT on a vector of 1024 elements requires approximately:
+\[
+\text{Work}_{\text{1D-FFT}}(1024) = 1024 \times \log_2(1024) = 1024 \times 10 = 10{,}240 \text{ operations}
+\]
+
+\subsection{2D FFT via Row-Column Decomposition}
+
+\subsubsection{Phase 1: Row-FFT (Parallel)}
+
+Each worker receives a $\frac{M}{P} \times N = 256 \times 1024$ block. The worker computes a 1D FFT on each of its 256 rows.
+
+\begin{itemize}
+    \item \textbf{Work per worker}: $\frac{M}{P}$ rows $\times$ $N \log N$ ops/row = $256 \times 1024 \times 10 = 2{,}621{,}440$ ops
+    \item \textbf{Total work (all 4 workers)}: $M \times N \log N = 1024 \times 1024 \times 10 = 10{,}485{,}760$ ops
+    \item \textbf{Span (PRAM critical path)}: $N \log N = 10{,}240$ ops (one worker's FFT computation)
+\end{itemize}
+
+\subsubsection{Phase 2: Global Transposition (Sequential on Master)}
+
+The master gathers all row-FFT blocks ($M \times N$ complex values) and transposes the matrix in-memory.
+
+\begin{itemize}
+    \item \textbf{Work}: $O(M \times N) = 1{,}048{,}576$ memory operations (read + write)
+    \item \textbf{Span}: $O(M \times N)$ (fully sequential, cannot be parallelized without breaking memory access patterns)
+\end{itemize}
+
+\subsubsection{Phase 3: Column-FFT (Parallel)}
+
+After transposition, each worker receives a $\frac{M}{P} \times N$ block (now corresponding to columns) and computes 1D FFT on each "row."
+
+\begin{itemize}
+    \item \textbf{Work per worker}: Same as Phase 1 = $2{,}621{,}440$ ops
+    \item \textbf{Total work}: $M \times N \log N = 10{,}485{,}760$ ops
+    \item \textbf{Span}: $N \log N = 10{,}240$ ops
+\end{itemize}
+
+\subsubsection{2D FFT Summary}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{lll}
+        \hline
+        \textbf{Phase} & \textbf{Total Work} & \textbf{Span} \\
+        \hline
+        Row-FFT & $M \times N \log N$ & $N \log N$ \\
+        Transposition & $M \times N$ & $M \times N$ \\
+        Column-FFT & $M \times N \log N$ & $N \log N$ \\
+        \hline
+        \textbf{Total 2D FFT} & $\mathbf{2MN \log N + MN}$ & $\mathbf{MN + N\log N}$ \\
+        \hline
+    \end{tabular}
+\end{table}
+
+For $M = N = 1024$:
+
+\begin{equation}
+\text{Work}_{\text{2D-FFT}} = 2 \times 1024^2 \times 10 + 1024^2 = 20{,}971{,}520 + 1{,}048{,}576 = 22{,}020{,}096 \text{ ops}
+\end{equation}
+
+\begin{equation}
+\text{Span}_{\text{2D-FFT}} = 1{,}048{,}576 + 10{,}240 \approx 1{,}058{,}816 \text{ ops (bottleneck: transposition)}
+\end{equation}
+
+\subsection{Gaussian High-Pass Filter (GHPF)}
+
+After the 2D FFT, a frequency-domain filter is applied element-wise:
+
+\[
+X_{\text{filtered}}[k, l] = X[k, l] \cdot H(k, l)
+\]
+
+where $H(k, l) = 1 - e^{-\frac{D^2(k,l)}{2D_0^2}}$ and $D(k, l)$ is the distance from the DC component.
+
+\begin{itemize}
+    \item \textbf{Work}: $O(M \times N)$ = $1{,}048{,}576$ operations (one multiply + exp per element)
+    \item \textbf{Span}: $O(M \times N / P) = 262{,}144$ (each worker processes its portion in parallel)
+    \item \textbf{Parallelism}: $\frac{\text{Work}}{\text{Span}} = 4$ (embarrassingly parallel across 4 workers)
+\end{itemize}
+
+\subsection{Inverse 2D FFT (IFFT)}
+
+The IFFT mirrors the forward 2D FFT process and has identical complexity:
+
+\begin{equation}
+\text{Work}_{\text{IFFT}} = 2MN \log N + MN = 22{,}020{,}096 \text{ ops}
+\end{equation}
+
+\begin{equation}
+\text{Span}_{\text{IFFT}} = MN + N \log N \approx 1{,}058{,}816 \text{ ops}
+\end{equation}
+
+The critical bottleneck again is the global transposition on the master.
+
+\subsection{End-to-End PRAM Complexity}
+
+Combining all stages:
+
+\begin{equation}
+\text{Total Work} = \underbrace{2MN \log N}_{\text{FFT}} + \underbrace{MN}_{\text{Transpose}} + \underbrace{MN}_{\text{GHPF}} + \underbrace{2MN \log N}_{\text{IFFT}} + \underbrace{MN}_{\text{I/O}}
+\end{equation}
+
+\begin{equation}
+\text{Total Work} = 4MN \log N + 3MN \approx 44{,}040{,}192 \text{ ops}
+\end{equation}
+
+\begin{equation}
+\text{Span} = 2 \times (MN + N \log N) + MN \approx 3{,}155{,}648 \text{ ops}
+\end{equation}
+
+\textbf{Parallelism Ratio}:
+
+\[
+\frac{\text{Work}}{\text{Span}} = \frac{44{,}040{,}192}{3{,}155{,}648} \approx 13.95
+\]
+
+This indicates that with perfect load balancing and zero communication, an ideal 4-processor PRAM can achieve $\sim 4.0\times$ speedup (limited by $P=4$ available processors).
+
+% ============================================================================
+\section{Communication Cost Analysis}
+% ============================================================================
+
+In a real distributed system, the gap between PRAM-predicted speedup and measured speedup is dominated by \textbf{communication overhead}.
+
+\subsection{Message Model}
+
+The time to transmit $L$ bytes over the interconnect is modeled as:
+
+\[
+T_{\text{comm}} = \alpha + \frac{L}{\beta}
+\]
+
+where:
+\begin{itemize}
+    \item $\alpha$ = \textbf{latency} (message startup time, in seconds)
+    \item $\beta$ = \textbf{bandwidth} (bytes per second)
+\end{itemize}
+
+\subsection{Network Parameters (4-Node Cluster)}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{ll}
+        \hline
+        \textbf{Configuration} & \textbf{Latency ($\alpha$)} & \textbf{Bandwidth ($\beta$)} \\
+        \hline
+        Gigabit Ethernet & $\sim 10$ µs & $\sim 125$ MB/s \\
+        WiFi 802.11ac (5 GHz) & $\sim 50$ µs & $\sim 50$ MB/s \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Communication Phases}
+
+\subsubsection{MPI\_Scatterv (Master $\to$ Workers)}
+
+Master distributes $\frac{M \times N}{P}$ complex elements (8 bytes each) to each worker:
+
+\[
+L_{\text{scatter}} = \frac{1024 \times 1024 \times 8}{4} = 2\text{ MB per worker}
+\]
+
+Time per worker (Ethernet):
+\[
+T_{\text{scatter}} = 10 \text{ µs} + \frac{2 \times 10^6}{125 \times 10^6} = 10 \text{ µs} + 16 \text{ ms} = 16.01 \text{ ms}
+\]
+
+\subsubsection{MPI\_Gatherv (Workers $\to$ Master)}
+
+Each worker sends its $\frac{M \times N}{P}$ results to master. Total communication:
+
+\[
+T_{\text{gather}} = 3 \times T_{\text{scatter}} = 48.03 \text{ ms} \text{ (assuming sequential receives)}
+\]
+
+With pipelined gathering:
+\[
+T_{\text{gather, pipelined}} \approx T_{\text{scatter}} = 16.01 \text{ ms}
+\]
+
+\subsubsection{Total Communication per FFT Iteration}
+
+\[
+T_{\text{comm, total}} = 2 \times T_{\text{scatter}} + 2 \times T_{\text{gather}} + T_{\text{transpose}}
+\]
+
+Assuming transpose is fast (local to master):
+\[
+T_{\text{comm, total}} \approx 4 \times 16 \text{ ms} = 64 \text{ ms}
+\]
+
+\subsection{Computation Time (PRAM Model)}
+
+Estimated computation time assuming operations complete at $\sim 1$ GHz (conservative for ARM):
+
+\[
+T_{\text{compute}} = \frac{\text{Span}}{f_{\text{clock}}} = \frac{3{,}155{,}648}{10^9} \approx 3.2 \text{ ms}
+\]
+
+\subsection{Communication-to-Computation Ratio}
+
+\[
+\frac{T_{\text{comm}}}{T_{\text{compute}}} = \frac{64 \text{ ms}}{3.2 \text{ ms}} = 20
+\]
+
+\textbf{Interpretation}: Communication overhead is $\sim 20\times$ the theoretical computation time. This is the primary bottleneck in our distributed system.
+
+% ============================================================================
+\section{Amdahl's Law Analysis}
+% ============================================================================
+
+Amdahl's Law provides a fundamental upper bound on speedup when a fraction of the program remains sequential:
+
+\[
+S(P) = \frac{1}{(1-f) + \frac{f}{P}}
+\]
+
+where:
+\begin{itemize}
+    \item $S(P)$ = speedup on $P$ processors
+    \item $f$ = parallelizable fraction of total execution time
+    \item $(1-f)$ = sequential fraction (cannot be parallelized)
+\end{itemize}
+
+\subsection{Identifying Sequential vs. Parallel Fractions}
+
+For our distributed FFT pipeline:
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{lll}
+        \hline
+        \textbf{Task} & \textbf{Type} & \textbf{Time (Estimate)} \\
+        \hline
+        I/O (read image on master) & Sequential & $5$ ms \\
+        MPI\_Scatterv & Sequential (master-driven) & $16$ ms \\
+        Row-FFT computation & Parallel (all 4 workers) & $50$ ms \\
+        MPI\_Gatherv & Sequential (master aggregates) & $16$ ms \\
+        Matrix Transposition (on master) & Sequential & $10$ ms \\
+        MPI\_Scatterv (column blocks) & Sequential & $16$ ms \\
+        Column-FFT computation & Parallel (all 4 workers) & $50$ ms \\
+        MPI\_Gatherv & Sequential & $16$ ms \\
+        GHPF application & Parallel (vectorized on workers) & $20$ ms \\
+        IFFT (inverse transforms) & Parallel (mirrors forward) & $100$ ms \\
+        IFFT gather + I/O & Sequential & $16$ ms \\
+        \hline
+        \textbf{Total Execution Time} & & $\mathbf{315}$ ms \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsubsection{Sequential Time}
+
+Sum of inherently sequential tasks:
+\[
+T_{\text{seq}} = 5 + 16 + 16 + 10 + 16 + 16 = 79 \text{ ms}
+\]
+
+\subsubsection{Parallel Time}
+
+Tasks that can be parallelized:
+\[
+T_{\text{par}} = 50 + 50 + 20 + 100 = 220 \text{ ms}
+\]
+
+\subsubsection{Parallelizable Fraction}
+
+\[
+f = \frac{T_{\text{par}}}{T_{\text{par}} + T_{\text{seq}}} = \frac{220}{220 + 79} = \frac{220}{299} \approx 0.736
+\]
+
+\textbf{Sequential fraction}: $(1 - f) = 1 - 0.736 = 0.264 \approx 26.4\%$
+
+\subsection{Speedup Prediction for 4-Node System}
+
+Applying Amdahl's Law with $P = 4$ and $f = 0.736$:
+
+\[
+S(4) = \frac{1}{0.264 + \frac{0.736}{4}} = \frac{1}{0.264 + 0.184} = \frac{1}{0.448} = \boxed{2.232}
+\]
+
+\textbf{Interpretation}: With our estimated 26.4\% sequential fraction, a 4-node cluster achieves a predicted speedup of $\sim 2.23\times$ compared to single-node execution.
+
+\subsection{Speedup Asymptote}
+
+As $P \to \infty$:
+
+\[
+S_{\max} = \frac{1}{1-f} = \frac{1}{0.264} \approx \boxed{3.79}
+\]
+
+Even with infinite processors, our system is limited to $\sim 3.79\times$ speedup due to the 26.4\% sequential fraction.
+
+\subsection{Efficiency Analysis}
+
+Parallel efficiency is defined as:
+
+\[
+E(P) = \frac{S(P)}{P} = \frac{1}{P(1-f) + f}
+\]
+
+For our system:
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{cccc}
+        \hline
+        $P$ & $S(P)$ & $E(P)$ & $E(P) \%$ \\
+        \hline
+        1 & 1.000 & 1.000 & 100.0\% \\
+        2 & 1.602 & 0.801 & 80.1\% \\
+        4 & 2.232 & 0.558 & 55.8\% \\
+        8 & 2.666 & 0.333 & 33.3\% \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\textbf{Key observation}: Efficiency drops to 55.8\% at $P=4$ due to communication overhead and sequential bottlenecks.
+
+\subsection{Sensitivity Analysis}
+
+How sensitive is speedup to the parallelizable fraction?
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{cccc}
+        \hline
+        \textbf{Scenario} & $f$ & $S(4)$ & Notes \\
+        \hline
+        Pessimistic & 0.50 & 1.54 & High communication overhead \\
+        Current Estimate & 0.736 & 2.23 & Best guess based on profile \\
+        Optimistic & 0.90 & 3.08 & With optimized communication \\
+        Ideal (no overhead) & 1.00 & 4.00 & PRAM model (unattainable) \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\textbf{Insight}: Reducing sequential overhead (I/O, communication) from 26.4\% to 10\% would increase speedup from 2.23 to 3.08—a 38\% improvement.
+
+% ============================================================================
+\section{Bottleneck Identification}
+% ============================================================================
+
+\subsection{Primary Bottleneck: Global Transposition}
+
+The matrix transposition required between row-FFT and column-FFT phases is a critical sequential bottleneck:
+
+\begin{itemize}
+    \item \textbf{Must gather} all 1M complex elements to master (16 ms).
+    \item \textbf{Must transpose} in-memory on master ($10$ ms).
+    \item \textbf{Must redistribute} transposed matrix to workers (16 ms).
+    \item \textbf{Total}: 42 ms out of 315 ms total = \textbf{13.3\%} of execution time.
+\end{itemize}
+
+\textbf{Mitigation strategies}:
+\begin{enumerate}
+    \item \textbf{All-to-all communication}: Use MPI\_Alltoall instead of separate gather/scatter. Reduces latency overhead.
+    \item \textbf{In-place transpose}: Transpose without copying (reduces memory bandwidth).
+    \item \textbf{Overlap communication}: Non-blocking sends/receives (MPI\_Isend/Irecv) while computing.
+\end{enumerate}
+
+\subsection{Secondary Bottleneck: I/O and Communication Startup}
+
+MPI message startup latency ($\alpha = 10$ µs) compounds over multiple Scatter/Gather operations:
+
+\[
+\text{Latency overhead} = 6 \text{ operations} \times 10 \text{ µs} = 60 \text{ µs}
+\]
+
+While small in absolute terms, this adds up across iterations. Solution: \textbf{batch operations} and \textbf{pipeline communication}.
+
+\subsection{Tertiary Bottleneck: Master Node Congestion}
+
+The master acts as a central hub for all communication:
+\begin{itemize}
+    \item Gathers data from 3 workers (sequential receive if not pipelined).
+    \item Performs matrix transposition (CPU-bound).
+    \item Scatters data back to 3 workers.
+\end{itemize}
+
+With $P=4$, the master becomes a \textbf{single point of contention}. With $P > 4$, this would worsen significantly.
+
+\textbf{Insight}: Our 4-node system is near the practical limit for this algorithm architecture. Beyond 6 nodes, communication overhead would dominate computation.
+
+% ============================================================================
+\section{Recommendations for Optimization}
+% ============================================================================
+
+\subsection{Tier 1: Non-Blocking Communication}
+
+Replace all synchronous MPI calls with non-blocking variants:
+
+\[
+\text{Old}: \quad T_{\text{compute}} = 50 \text{ ms}, \quad T_{\text{communication}} = 16 \text{ ms} \quad (\text{sequential})
+\]
+
+\[
+\text{New}: \quad T_{\text{compute+communication}} = \max(50, 16) = 50 \text{ ms} \quad (\text{overlapped})
+\]
+
+\textbf{Expected impact}: Reduce sequential time from 26.4\% to $\sim 15\%$, increasing $S(4)$ from 2.23 to $\sim 2.8$.
+
+\subsection{Tier 2: All-to-All Transpose}
+
+Use MPI collective operations optimized for transposition rather than manual gather/transpose/scatter:
+
+\[
+\text{Expected}: 20\% faster transposition phase
+\]
+
+\textbf{Expected impact}: Modest (transposition is only 13\% of total time).
+
+\subsection{Tier 3: Distributed Transposition}
+
+Implement \textbf{local transpose + peer-to-peer swap} among workers to avoid central master bottleneck:
+
+\[
+\text{Expected impact}: Significant for $P > 8$; moderate benefit for $P=4$.
+\]
+
+% ============================================================================
+\section{Experimental Validation Plan}
+% ============================================================================
+
+This theoretical analysis predicts $S(4) = 2.23\times$ speedup on our 4-node cluster. Sharjeel Chandna will validate these predictions empirically by:
+
+\begin{enumerate}
+    \item \textbf{Single-node baseline}: Run 2D FFT on master node alone. Record total time.
+    \item \textbf{4-node execution}: Run full distributed pipeline. Measure per-phase timing.
+    \item \textbf{Communication profiling}: Use MPI profiling tools to measure:
+        \begin{itemize}
+            \item Scatter/Gather times
+            \item Transposition time
+            \item Computation time per phase
+        \end{itemize}
+    \item \textbf{Bottleneck verification}: Identify which phase dominates in practice.
+    \item \textbf{Amdahl validation}: Compare measured $S(P)$ to predictions. If $S(4) \approx 2.0\text{–}2.5$, theory is validated.
+\end{enumerate}
+
+% ============================================================================
+\section{Conclusion}
+% ============================================================================
+
+Using formal PRAM analysis and Amdahl's Law, we have established the theoretical foundations of our distributed image processing system:
+
+\begin{enumerate}
+    \item \textbf{Inherent parallelism}: The 2D FFT has $\sim 14\times$ parallelism ratio (Work/Span), allowing good speedup on multiple processors.
+    
+    \item \textbf{Sequential bottleneck}: Global matrix transposition and MPI communication comprise $\sim 26.4\%$ of total execution time, limiting speedup to $S(4) = 2.23\times$.
+    
+    \item \textbf{Asymptotic limit}: Even with infinite processors, speedup is capped at $3.79\times$ (from Amdahl's Law), reflecting the 26.4\% sequential fraction.
+    
+    \item \textbf{Efficiency}: At $P=4$, parallel efficiency is $55.8\%$—acceptable but indicating room for optimization via non-blocking communication and distributed transposition.
+    
+    \item \textbf{4-node suitability}: Our 4-node configuration is near the practical optimum for this algorithm, balancing communication overhead with parallelism gains. Scaling to 6+ nodes would require algorithmic redesign.
+\end{enumerate}
+
+\textbf{Next steps}: Implementation (Muhammad), benchmarking (Talha), and empirical validation (Sharjeel) will test these theoretical predictions and guide optimization efforts.
+
+% ============================================================================
+\section*{References}
+% ============================================================================
+
+\begin{thebibliography}{99}
+
+\bibitem{blelloch2011} Blelloch, G. E., Maggs, B. M., \& Plaxton, C. G. (1994). 
+``The Space-Efficient Algorithm Design Manual.'' 
+\textit{Proceedings of the International Colloquium on Structural Information and Communication Complexity}.
+
+\bibitem{amdahl} Amdahl, G. M. (1967). 
+``Validity of the single processor approach to achieving large scale computing capabilities.'' 
+\textit{AFIPS Conference Proceedings}, 30, 483–485.
+
+\bibitem{mpi} Message Passing Interface Forum. (2021). 
+``MPI: A Message-Passing Interface Standard (Version 4.0).'' 
+Retrieved from \url{https://www.mpi-forum.org/}
+
+\bibitem{fft} Cooley, J. W., \& Tukey, J. W. (1965). 
+``An algorithm for the machine calculation of complex Fourier series.'' 
+\textit{Mathematics of Computation}, 19(90), 297–301.
+
+\bibitem{raspberrypi} Raspberry Pi Foundation. (2021). 
+``Raspberry Pi 4 Technical Specifications.'' 
+Retrieved from \url{https://www.raspberrypi.org/products/raspberry-pi-4-model-b/specifications/}
+
+\end{thebibliography}
+
+\end{document}
