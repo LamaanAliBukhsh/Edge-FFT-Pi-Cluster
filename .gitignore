@@ -60,3 +60,8 @@ edges_*.png
 Thumbs.db
 .AppleDouble
 .LSOverride
+
+# Local-only docs (not pushed)
+TEAM_CONTRIBUTIONS.md
+TESTING_GUIDE_M0_TO_M3.md
+

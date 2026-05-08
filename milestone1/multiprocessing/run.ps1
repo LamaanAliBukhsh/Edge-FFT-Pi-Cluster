@@ -1,4 +1,4 @@
-# Milestone 1 – Multiprocessing Sobel Launcher
+﻿# Milestone 1 - Multiprocessing Sobel Launcher
 # Muhammad Fahad | Windows PowerShell
 
 param(
@@ -37,35 +37,53 @@ EXAMPLES:
 "@
 }
 
+function Get-PythonCmd {
+    # Prefer python3 (Linux/macOS); fall back to python (Windows).
+    foreach ($candidate in @('python3', 'python')) {
+        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -notmatch 'WindowsApps') { return $candidate }
+    }
+    Write-Host 'ERROR: neither python3 nor python found on PATH.' -ForegroundColor Red
+    exit 1
+}
+
 function Run-Local {
-    Write-Host "MULTIPROCESSING SOBEL – Muhammad Fahad" -ForegroundColor Green
+    Write-Host "MULTIPROCESSING SOBEL - Muhammad Fahad" -ForegroundColor Green
     Write-Host "======================================" -ForegroundColor Green
     Write-Host ""
+    $py = Get-PythonCmd
+    Write-Host "Using interpreter: $py" -ForegroundColor DarkGray
     Set-Location app
     
     switch ($Command.ToLower()) {
         "benchmark" {
-            $args = @("benchmark.py", "--runs", $Runs.ToString())
-            if ($Naive) { $args += "--naive" }
-            Write-Host "Running: python3 $args"
-            python3 @args
+            # Ensure a local test image exists; the Python default path
+            # (/app/test_image.jpg) only resolves inside the Docker container.
+            if (-not (Test-Path test_image.jpg)) {
+                Write-Host "Generating local test image..." -ForegroundColor DarkGray
+                & $py generate_test_image.py --output test_image.jpg
+            }
+            $pyArgs = @("benchmark.py", "--image", "test_image.jpg", "--runs", $Runs.ToString())
+            if ($Naive) { $pyArgs += "--naive" }
+            Write-Host "Running: $py $pyArgs"
+            & $py @pyArgs
         }
         "test" {
-            python3 generate_test_image.py --output test_image.jpg
+            & $py generate_test_image.py --output test_image.jpg
             Write-Host ""
-            $args = @("sobel_multiprocessing.py", "--image", "test_image.jpg", "--output", "test_output.jpg", "--n-processes", "2")
-            if ($Naive) { $args += "--naive" }
-            Write-Host "Running: python3 $args"
-            python3 @args
+            $pyArgs = @("sobel_multiprocessing.py", "--image", "test_image.jpg", "--output", "test_output.jpg", "--n-processes", "2")
+            if ($Naive) { $pyArgs += "--naive" }
+            Write-Host "Running: $py $pyArgs"
+            & $py @pyArgs
             Write-Host ""
             if (Test-Path test_output.jpg) {
                 $size = (Get-Item test_output.jpg).Length
-                Write-Host "Output saved: test_output.jpg ($size bytes)" -ForegroundColor Green
+                Write-Host "Output saved: test_output.jpg (${size} bytes)" -ForegroundColor Green
             }
         }
         "shell" {
             Write-Host "Entering Python shell in $PWD" -ForegroundColor Yellow
-            python3
+            & $py
         }
         default { Show-Usage }
     }
@@ -88,9 +106,9 @@ function Run-Docker {
     # Run container based on command
     switch ($Command.ToLower()) {
         "benchmark" {
-            $args = @("--rm", "-v", "${PWD}/app:/app", "pdcm0-multiprocessing:latest", "python3", "benchmark.py", "--runs", $Runs.ToString())
-            if ($Naive) { $args += "--naive" }
-            docker run @args
+            $dockerArgs = @("--rm", "-v", "${PWD}/app:/app", "pdcm0-multiprocessing:latest", "python3", "benchmark.py", "--runs", $Runs.ToString())
+            if ($Naive) { $dockerArgs += "--naive" }
+            docker run @dockerArgs
         }
         "test" {
             docker run --rm -v "${PWD}/app:/app" pdcm0-multiprocessing:latest python3 sobel_multiprocessing.py --image /app/test_image.jpg --output /app/test_output_docker.jpg --n-processes 2

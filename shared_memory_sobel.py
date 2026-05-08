@@ -123,35 +123,59 @@ class SobelEdgeDetector:
     @staticmethod
     def sobel_kernel(image: np.ndarray) -> np.ndarray:
         """
-        Apply Sobel edge detection to an image (single-threaded reference).
-        
-        Args:
-            image: Input image as numpy array
-            
-        Returns:
-            Edge-detected image
+        Pure-Python double-loop Sobel reference (NAIVE baseline).
+
+        Kept for educational comparison only -- this kernel is roughly two
+        orders of magnitude slower than the vectorised version because it
+        runs the inner 3x3 multiply-accumulate from Python.  Quoting the
+        speedup of the parallel pipeline against THIS baseline conflates
+        algorithmic gains (NumPy vectorisation) with parallelism gains
+        and produces physically impossible efficiency numbers (>100%).
+
+        For honest parallel speedup measurements, see
+        ``sobel_kernel_vectorized`` and ``detect_edges_vectorized``.
         """
         height, width = image.shape[:2]
         edges = np.zeros((height, width), dtype=np.float32)
-        
+
         # Pad image
         padded = np.pad(image.astype(np.float32), 1, mode='edge')
-        
+
         for i in range(height):
             for j in range(width):
                 # Extract 3x3 neighborhood
                 neighborhood = padded[i:i+3, j:j+3]
-                
+
                 # Apply Sobel kernels
                 gx = np.sum(neighborhood * SobelEdgeDetector.SOBEL_X)
                 gy = np.sum(neighborhood * SobelEdgeDetector.SOBEL_Y)
-                
+
                 # Magnitude
                 edges[i, j] = np.sqrt(gx**2 + gy**2)
-        
+
         if edges.max() > 0:
             edges = (edges / edges.max() * 255).astype(np.uint8)
         return edges.astype(np.uint8)
+
+    @staticmethod
+    def sobel_kernel_vectorized(image: np.ndarray) -> np.ndarray:
+        """
+        Vectorised single-process Sobel (FAIR parallel-speedup baseline).
+
+        Uses exactly the same einsum-based kernel as the per-worker
+        compute path in ``_worker_process``; the only difference is that
+        the entire image is processed in this process instead of being
+        split across N workers.  This is therefore the correct denominator
+        for the parallel speedup S(N) = T_vec_serial / T_parallel(N).
+        """
+        padded = np.pad(image.astype(np.float32), 1, mode='edge')
+        windows = sliding_window_view(padded, (3, 3))
+        gx = np.einsum('ijkl,kl->ij', windows, SobelEdgeDetector.SOBEL_X)
+        gy = np.einsum('ijkl,kl->ij', windows, SobelEdgeDetector.SOBEL_Y)
+        magnitude = np.sqrt(gx ** 2 + gy ** 2)
+        if magnitude.max() > 0:
+            magnitude = (magnitude / magnitude.max() * 255)
+        return magnitude.astype(np.uint8)
     
     @staticmethod
     def _worker_process(
@@ -264,18 +288,25 @@ class SobelEdgeDetector:
     
     def detect_edges_sequential(self, image: np.ndarray) -> Tuple[np.ndarray, float]:
         """
-        Sequential Sobel edge detection (baseline).
-        
-        Args:
-            image: Input image as numpy array
-            
-        Returns:
-            Tuple of (edge_detected_image, computation_time)
+        Naive (pure-Python) sequential Sobel.  See ``sobel_kernel`` for the
+        warning -- this is the SLOW baseline used only to demonstrate the
+        cost of running the inner loop in Python.
         """
         start_time = time.time()
         result = self.sobel_kernel(image)
         computation_time = time.time() - start_time
-        
+
+        return result, computation_time
+
+    def detect_edges_vectorized(self, image: np.ndarray) -> Tuple[np.ndarray, float]:
+        """
+        Vectorised single-process Sobel.  This is the correct baseline for
+        computing parallel speedup S(N) of the shared-memory pipeline.
+        """
+        start_time = time.time()
+        result = self.sobel_kernel_vectorized(image)
+        computation_time = time.time() - start_time
+
         return result, computation_time
     
     def detect_edges(self, image: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -296,78 +327,127 @@ class SobelEdgeDetector:
 
 def benchmark_comparison(image: np.ndarray, num_processes: int = 4) -> Dict[str, Any]:
     """
-    Benchmark shared memory vs. sequential Sobel implementation.
-    
-    Args:
-        image: Input image as numpy array
-        num_processes: Number of processes for shared memory version
-        
-    Returns:
-        Dictionary with benchmark results
+    Three-way benchmark of the Sobel pipeline:
+
+        1. Naive (pure-Python) single process    -- educational baseline
+        2. Vectorised (einsum) single process    -- FAIR baseline for S(N)
+        3. Shared-memory parallel (N processes)  -- the M2 deliverable
+
+    Reports two speedup numbers so the apples-to-apples parallel speedup
+    cannot be confused with the (much larger) algorithmic vectorisation
+    win.  Efficiency is calculated against the vectorised baseline only,
+    which is why it stays bounded by 100% as physics requires.
     """
-    results = {}
-    
-    # Sequential baseline
-    logger.info("Running sequential baseline...")
-    detector_seq = SobelEdgeDetector(num_processes=1, use_shm=False)
-    edges_seq, time_seq = detector_seq.detect_edges_sequential(image)
-    results['sequential'] = {
-        'time': time_seq,
-        'image_shape': edges_seq.shape
+    results: Dict[str, Any] = {}
+
+    # 1. Naive (pure-Python) sequential baseline
+    logger.info("Running NAIVE pure-Python sequential baseline...")
+    detector_naive = SobelEdgeDetector(num_processes=1, use_shm=False)
+    edges_naive, time_naive = detector_naive.detect_edges_sequential(image)
+    results['naive_sequential'] = {
+        'time': time_naive,
+        'image_shape': edges_naive.shape,
     }
-    logger.info(f"Sequential time: {time_seq:.4f}s")
-    
-    # Shared memory version
-    logger.info(f"Running shared memory version with {num_processes} processes...")
+    logger.info(f"Naive sequential time: {time_naive:.4f}s")
+
+    # 2. Vectorised single-process baseline -- the correct denominator for S(N)
+    logger.info("Running VECTORISED single-process baseline (fair S(N) baseline)...")
+    detector_vec = SobelEdgeDetector(num_processes=1, use_shm=False)
+    edges_vec, time_vec = detector_vec.detect_edges_vectorized(image)
+    results['vectorized_sequential'] = {
+        'time': time_vec,
+        'image_shape': edges_vec.shape,
+    }
+    logger.info(f"Vectorised sequential time: {time_vec:.4f}s")
+
+    # 3. Shared-memory parallel pipeline
+    logger.info(f"Running SHARED-MEMORY parallel pipeline with {num_processes} processes...")
     detector_shm = SobelEdgeDetector(num_processes=num_processes, use_shm=True)
     edges_shm, time_shm = detector_shm.detect_edges(image)
     results['shared_memory'] = {
         'time': time_shm,
         'num_processes': num_processes,
-        'image_shape': edges_shm.shape
+        'image_shape': edges_shm.shape,
     }
     logger.info(f"Shared memory time: {time_shm:.4f}s")
-    
-    # Calculate speedup
-    speedup = time_seq / time_shm
-    efficiency = (speedup / num_processes) * 100
-    
+
+    # Two distinct speedup ratios.  Only the second one is a parallelism
+    # measurement; the first is mostly the cost of running NumPy code from
+    # Python instead of from C.
+    vectorisation_speedup = time_naive / time_vec if time_vec > 0 else float('inf')
+    parallel_speedup = time_vec / time_shm if time_shm > 0 else float('inf')
+    parallel_efficiency = (parallel_speedup / num_processes) * 100
+    end_to_end_speedup = time_naive / time_shm if time_shm > 0 else float('inf')
+
     results['comparison'] = {
-        'speedup': speedup,
-        'efficiency_percent': efficiency,
-        'improvement_percent': ((time_seq - time_shm) / time_seq) * 100
+        'vectorisation_speedup': vectorisation_speedup,
+        'parallel_speedup': parallel_speedup,
+        'parallel_efficiency_percent': parallel_efficiency,
+        'end_to_end_speedup': end_to_end_speedup,
     }
-    
-    logger.info(f"Speedup: {speedup:.2f}x")
-    logger.info(f"Efficiency: {efficiency:.2f}%")
-    
+
+    logger.info(
+        f"Vectorisation gain (algorithm only): {vectorisation_speedup:.2f}x  "
+        f"-- not parallelism, do not quote as such"
+    )
+    logger.info(
+        f"Parallel speedup S({num_processes}) = T_vec / T_par : "
+        f"{parallel_speedup:.2f}x  (efficiency {parallel_efficiency:.1f}%)"
+    )
+
     return results
 
 
 if __name__ == "__main__":
-    # Example usage
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Shared-memory IPC Sobel benchmark (Milestone 2)"
+    )
+    parser.add_argument("--size", type=int, default=256,
+                        help="Side length of the synthetic square test image (default 256)")
+    parser.add_argument("--processes", type=int, default=4,
+                        help="Number of parallel worker processes (default 4)")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="RNG seed for the synthetic image (default 0)")
+    args = parser.parse_args()
+
     print("=" * 60)
     print("Shared Memory IPC Sobel Edge Detector - Milestone 2")
     print("=" * 60)
-    
-    # Create a test image (grayscale gradient)
-    test_image = np.random.randint(0, 256, (256, 256), dtype=np.uint8)
-    
+
+    rng = np.random.default_rng(args.seed)
+    test_image = rng.integers(0, 256, (args.size, args.size), dtype=np.uint8)
+
     print(f"\nTest image shape: {test_image.shape}")
     print(f"Test image dtype: {test_image.dtype}")
-    
-    # Run benchmark
+    print(f"Worker processes: {args.processes}")
+
     print("\n" + "-" * 60)
     print("Running Benchmarks...")
     print("-" * 60)
-    
-    results = benchmark_comparison(test_image, num_processes=4)
-    
+
+    results = benchmark_comparison(test_image, num_processes=args.processes)
+
+    cmp = results['comparison']
     print("\n" + "=" * 60)
     print("Benchmark Results")
     print("=" * 60)
-    print(f"Sequential time: {results['sequential']['time']:.4f}s")
-    print(f"Shared Memory time (4 procs): {results['shared_memory']['time']:.4f}s")
-    print(f"Speedup: {results['comparison']['speedup']:.2f}x")
-    print(f"Efficiency: {results['comparison']['efficiency_percent']:.2f}%")
+    print(f"  Naive  sequential   (pure-Python loop) : "
+          f"{results['naive_sequential']['time']:.4f}s")
+    print(f"  Vector sequential   (einsum, 1 proc)   : "
+          f"{results['vectorized_sequential']['time']:.4f}s")
+    print(f"  Shared-memory paral ({args.processes} procs)         : "
+          f"{results['shared_memory']['time']:.4f}s")
+    print("-" * 60)
+    print(f"  Vectorisation gain   (algorithm only)  : "
+          f"{cmp['vectorisation_speedup']:.2f}x  [NOT parallelism]")
+    print(f"  Parallel speedup S({args.processes})                : "
+          f"{cmp['parallel_speedup']:.2f}x  (efficiency "
+          f"{cmp['parallel_efficiency_percent']:.1f}%)")
+    print(f"  End-to-end speedup   (vec x parallel)  : "
+          f"{cmp['end_to_end_speedup']:.2f}x")
+    print("=" * 60)
+    print("Quote 'Parallel speedup S(N)' for the M2 / M3 reports.")
+    print("It is bounded by N (here {n}) as required by Amdahl's law.".format(n=args.processes))
     print("=" * 60)

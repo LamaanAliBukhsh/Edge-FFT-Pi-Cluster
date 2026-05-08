@@ -212,6 +212,40 @@ Use this to validate predictions against empirical measurements:
 
 ---
 
+#### Empirical update — May 2026 (1024×1024 Sobel kernel)
+
+Re-measurement after the `shared_memory_sobel.py` benchmark methodology fix
+(see `shared_memory_sobel.py::benchmark_comparison`, which now compares the
+parallel pipeline against a **vectorised** single-process baseline rather
+than a 100×-slower pure-Python kernel):
+
+| Platform | Vec serial | Parallel (4 procs) | S(4) | E(4) |
+|---|---|---|---|---|
+| Windows host (`spawn`) | ~0.046 s | ~0.40 s | **0.11×** | ~3% |
+| `n1` Linux container (`fork`) | ~0.061 s | ~0.22 s | **0.28×** | ~7% |
+
+These numbers fall **far short of the predicted 3.33×** because the Sobel
+kernel on a 1024×1024 image now runs in ~50 ms — too small for the
+parallelism gain to overcome process-startup + memmap-flush overhead.
+This is consistent with the theory section's communication-cost model:
+when `T_compute ≪ T_overhead`, S(N) collapses regardless of `f`.
+
+**Implications:**
+
+- The `S(4) = 3.33x` target was implicitly assuming a much larger or
+  more compute-heavy workload (e.g. 2D FFT). The Sobel kernel was a
+  poor proxy for it.
+- The proper place to validate the `S(4) ≈ 2.23×` distributed
+  prediction is the **M3 histogram-equalisation benchmark**
+  (`milestone3/app/benchmark_mpi.py`), which uses a workload sized
+  for the cluster.
+- The 26× / 650% number that briefly appeared in the M2 logs was the
+  ratio of *naive Python* sequential to *vectorised parallel* — pure
+  algorithmic gain, not parallelism. It has been removed from the
+  reported metrics.
+
+---
+
 ## For Talha (Benchmarking Suite)
 
 **Your Goals:**
